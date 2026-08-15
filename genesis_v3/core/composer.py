@@ -5,7 +5,7 @@ class Composer:
     def __init__(self, registry):
         self.registry = registry
 
-    def execute_plan(self, plan, sandbox, registry, cas, snapshot_mgr):
+    def execute_plan(self, plan, sandbox, registry, cas, snapshot_mgr, verifier):
         # For this MVP, support median flow specifically but without eval().
         if 'median' in plan.goal.lower():
             arr = plan.goal.split(':')[-1].strip()
@@ -43,8 +43,21 @@ class Composer:
                     median = (sorted_list[n//2 -1] + sorted_list[n//2])/2
                 # Create a new median capability (simulate creation)
                 new_cap = registry.create_generated_median_capability(median_logic_source=None, cas=cas)
-                # Build snapshot and activate
+
+                # Run verifier on the new capability and enforce activation gate
+                verification = verifier.verify_capability(new_cap['capability_id'], cas, registry, sandbox,
+                                                           tests=[{'entrypoint':'median','inputs':{'lst':arr_eval},'expected':median}])
+
+                # Only allow activation if verifier reports PASS
+                if verification.status != 'PASS':
+                    # Do not prepare or commit snapshot; reject activation
+                    return {'result':None, 'action':'rejected', 'verification': verification.dict()}
+
+                # Build snapshot and activate only after verification PASS
                 snapshot_mgr.prepare_snapshot('median_created')
+                # validate snapshot before commit
+                if not snapshot_mgr.validate_snapshot('median_created'):
+                    return {'result':None, 'action':'rejected', 'reason':'snapshot_validation_failed'}
                 snapshot_mgr.commit_snapshot('median_created')
                 return {'result':median, 'action':'created_capability', 'new_capability':new_cap}
             else:
