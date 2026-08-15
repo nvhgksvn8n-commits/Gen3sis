@@ -42,13 +42,20 @@ class CapabilityRegistry:
         rows = cur.fetchall()
         return [{'capability_id':r[0],'name':r[1],'version':r[2],'status':r[3],'bundle_hash':r[4],'created_at':r[5]} for r in rows]
 
-    def load_implementation(self, capability_id):
-        # look for file in skills/<capability_id>/implementation.py
-        path = os.path.join('skills', capability_id, 'implementation.py')
-        if not os.path.exists(path):
-            raise FileNotFoundError(path)
-        with open(path, 'r') as f:
-            return f.read()
+    def load_implementation(self, capability_id, cas):
+        # Resolve implementation from CAS using the registered bundle_hash
+        cur = self._conn.cursor()
+        cur.execute('SELECT bundle_hash FROM capabilities WHERE capability_id=?', (capability_id,))
+        row = cur.fetchone()
+        if not row:
+            raise FileNotFoundError(capability_id)
+        bundle_hash = row[0]
+        # retrieve and verify content from CAS
+        data = cas.retrieve_verified(bundle_hash)
+        try:
+            return data.decode('utf-8')
+        except Exception:
+            raise RuntimeError('Failed to decode implementation bytes')
 
     def create_generated_median_capability(self, median_logic_source, cas: 'ContentAddressableStore'):
         # Generate a simple median implementation and register

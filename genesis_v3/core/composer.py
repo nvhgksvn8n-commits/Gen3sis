@@ -21,15 +21,20 @@ class Composer:
             # try to find median capability
             cap = registry.find_by_name('median')
             if cap:
-                impl = registry.load_implementation(cap['capability_id'])
-                # execute implementation in sandbox
-                res = sandbox.run_python_function(impl, 'median', {'lst':arr_eval})
-                return {'result':res, 'action':'reuse'}
+                # use CAS-backed execution
+                artifact_hash = cap.get('bundle_hash')
+                result = sandbox.execute(artifact_hash, 'median', {'lst':arr_eval})
+                if result.success:
+                    return {'result': result.output, 'action':'reuse'}
+                return {'error': result.error, 'action':'fail'}
             # else try to compose using sort
             sorter = registry.find_by_name('sort')
             if sorter:
-                sort_impl = registry.load_implementation(sorter['capability_id'])
-                sorted_list = sandbox.run_python_function(sort_impl, 'sort_list', {'lst':arr_eval})
+                artifact_hash = sorter.get('bundle_hash')
+                res = sandbox.execute(artifact_hash, 'sort_list', {'lst':arr_eval})
+                if not res.success:
+                    return {'error':res.error, 'action':'fail'}
+                sorted_list = res.output
                 # compute median locally
                 n = len(sorted_list)
                 if n%2==1:
