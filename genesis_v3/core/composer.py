@@ -1,5 +1,8 @@
 from typing import Any
 import ast
+import json
+import hashlib
+from datetime import datetime
 
 class Composer:
     def __init__(self, registry):
@@ -53,13 +56,57 @@ class Composer:
                     # Do not prepare or commit snapshot; reject activation
                     return {'result':None, 'action':'rejected', 'verification': verification.dict()}
 
-                # Build snapshot and activate only after verification PASS
+                # Persist verification provenance in CAS (immutable) before snapshot activation
+                prov = {
+                    'capability_id': verification.capability_id,
+                    'artifact_hash': verification.artifact_hash,
+                    'verification_status': verification.status,
+                    'verifier_version': verification.provenance.get('verifier_version', 'unknown'),
+                    'verification_timestamp': verification.provenance.get('timestamp', datetime.utcnow().isoformat()),
+                    'tests_run': verification.tests_run,
+                    'tests_passed': verification.tests_passed,
+                    'tests_failed': verification.tests_failed,
+                    'errors': verification.errors,
+                }
+                # compute deterministic hash over canonicalized provenance (excluding the hash field)
+                canonical = json.dumps(prov, sort_keys=True, separators=(',',':')).encode('utf-8')
+                verification_result_hash = hashlib.sha256(canonical).hexdigest()
+                prov['verification_result_hash'] = verification_result_hash
+                # store the provenance JSON in CAS
+                prov_bytes = json.dumps(prov, sort_keys=True, indent=2).encode('utf-8')
+                prov_cas_hash = cas.store_bytes(prov_bytes)
+
+                # Build snapshot manifest and include provenance reference
                 snapshot_mgr.prepare_snapshot('median_created')
+                # update the snapshot manifest to include verification provenance reference
+                manifest_path = os.path.join(snapshot_mgr.base_dir, 'median_created.json')
+                try:
+                    with open(manifest_path, 'r') as f:
+                        manifest = json.load(f)
+                except Exception:
+                    manifest = {'snapshot_id':'median_created','timestamp':datetime.utcnow().isoformat(),'capabilities':registry.list_all()}
+                # attach provenance reference
+                vp = manifest.get('verification_provenance', [])
+                vp.append({
+                    'capability_id': prov['capability_id'],
+                    'artifact_hash': prov['artifact_hash'],
+                    'verification_status': prov['verification_status'],
+                    'verification_result_hash': prov['verification_result_hash'],
+                    'provenance_cas_hash': prov_cas_hash,
+                })
+                manifest['verification_provenance'] = vp
+                # write back manifest
+                with open(manifest_path, 'w') as f:
+                    json.dump(manifest, f, indent=2, sort_keys=True)
+
                 # validate snapshot before commit
                 if not snapshot_mgr.validate_snapshot('median_created'):
+                    # If validation fails, do not activate nor claim activation provenance
                     return {'result':None, 'action':'rejected', 'reason':'snapshot_validation_failed'}
+
+                # commit snapshot (atomic activation)
                 snapshot_mgr.commit_snapshot('median_created')
-                return {'result':median, 'action':'created_capability', 'new_capability':new_cap}
+                return {'result':median, 'action':'created_capability', 'new_capability':new_cap, 'verification_provenance_hash': verification_result_hash, 'provenance_cas_hash': prov_cas_hash}
             else:
                 return {'error':'no sorter available', 'action':'fail'}
         else:
