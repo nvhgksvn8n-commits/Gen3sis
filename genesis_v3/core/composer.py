@@ -1,16 +1,21 @@
 from typing import Any
+import ast
 
 class Composer:
     def __init__(self, registry):
         self.registry = registry
 
     def execute_plan(self, plan, sandbox, registry, cas, snapshot_mgr):
-        # For this MVP, support median flow specifically.
+        # For this MVP, support median flow specifically but without eval().
         if 'median' in plan.goal.lower():
             arr = plan.goal.split(':')[-1].strip()
             # expect input like 'median: [1,2,3]'
             try:
-                arr_eval = eval(arr)
+                # safer literal eval for Python literals only
+                arr_eval = ast.literal_eval(arr)
+                if not isinstance(arr_eval, (list, tuple)):
+                    raise ValueError('expected a list or tuple')
+                arr_eval = list(arr_eval)
             except Exception:
                 arr_eval = [3,1,2]
             # try to find median capability
