@@ -57,6 +57,14 @@ class CapabilityRegistry:
         except Exception:
             raise RuntimeError('Failed to decode implementation bytes')
 
+    def get_bundle_hash(self, capability_id):
+        cur = self._conn.cursor()
+        cur.execute('SELECT bundle_hash FROM capabilities WHERE capability_id=?', (capability_id,))
+        row = cur.fetchone()
+        if not row:
+            raise FileNotFoundError(capability_id)
+        return row[0]
+
     def create_generated_median_capability(self, median_logic_source, cas: 'ContentAddressableStore'):
         # Generate a simple median implementation and register
         capability_id = 'skill_004_median'
