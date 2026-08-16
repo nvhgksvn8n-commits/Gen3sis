@@ -21,14 +21,17 @@ def test_snapshot_immutability_and_commit(tmp_path):
     db.register('skill_001_add','add','0.1','ACTIVE','deadbeef')
 
     sm.prepare_snapshot('s1')
-    sm.commit_snapshot('s1')
-    snap_file = tmp_path / 'snapshots' / 's1.json'
-    assert snap_file.exists(), 'Snapshot file must remain in snapshots directory after commit'
+    hash1 = sm.seal_snapshot('s1')
+    sm.commit_snapshot(hash1)
+    snap_file = tmp_path / 'snapshots' / f'{hash1}.json'
+    assert snap_file.exists(), 'Sealed snapshot must remain in snapshots directory after commit'
     active = tmp_path / 'snapshots' / 'ACTIVE'
     assert active.exists()
     with open(active, 'r') as f:
         content = f.read().strip()
-    assert content == 's1'
+    assert content == hash1
+    # verify CAS retrieval succeeds
+    _ = cas.retrieve_verified(hash1)
 
 
 def test_rollback(tmp_path):
@@ -41,16 +44,19 @@ def test_rollback(tmp_path):
 
     db.register('skill_001_add','add','0.1','ACTIVE','hash1')
     sm.prepare_snapshot('s1')
+    hash1 = sm.seal_snapshot('s1')
+    sm.commit_snapshot(hash1)
+
     db.register('skill_002_sort','sort','0.1','ACTIVE','hash2')
     sm.prepare_snapshot('s2')
+    hash2 = sm.seal_snapshot('s2')
+    sm.commit_snapshot(hash2)
 
-    sm.commit_snapshot('s1')
-    sm.commit_snapshot('s2')
-    # ensure ACTIVE points to s2
+    # ensure ACTIVE points to hash2
     with open(os.path.join(str(tmp_path / 'snapshots'), 'ACTIVE'),'r') as f:
-        assert f.read().strip() == 's2'
+        assert f.read().strip() == hash2
 
-    # rollback to s1
-    sm.rollback('s1')
+    # rollback to hash1
+    sm.rollback(hash1)
     with open(os.path.join(str(tmp_path / 'snapshots'), 'ACTIVE'),'r') as f:
-        assert f.read().strip() == 's1'
+        assert f.read().strip() == hash1
